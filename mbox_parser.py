@@ -105,14 +105,14 @@ if __name__ == '__main__':
 
         # create CSV with header row
         writer = csv.writer(export_file, encoding='utf-8')
-        writer.writerow(["flagged", "date", "description", "from", "to", "cc", "subject", "content", "time (minutes)"])
+        writer.writerow(["index", "date", "from_addr", "to_addr", "cc_addr", "subject", "content"])
 
         # create row count
         row_written = 0
 
-        for email in mailbox.mbox(mbox_file):
+        for idx, email in enumerate(mailbox.mbox(mbox_file)):
             # capture default content
-            date = get_date(email["date"], os.getenv("DATE_FORMAT"))
+            date = mktime_tz(parsedate_tz(email["date"]))
             sent_from = get_emails_clean(email["from"])
             sent_to = get_emails_clean(email["to"])
             cc = get_emails_clean(email["cc"])
@@ -120,11 +120,13 @@ if __name__ == '__main__':
             contents = get_content(email)
 
             # apply rules to default content
-            row = rules.apply_rules(date, sent_from, sent_to, cc, subject, contents, owners, blacklist_domains)
+            # row = rules.apply_rules(date, sent_from, sent_to, cc, subject, contents, owners, blacklist_domains)
+            row = [idx, date, ", ".join(sent_from), ", ".join(sent_to), ", ".join(cc), subject, contents]
 
             # write the row
             writer.writerow(row)
             row_written += 1
+
 
         # report
         report = "generated " + export_file_name + " for " + str(row_written) + " messages"

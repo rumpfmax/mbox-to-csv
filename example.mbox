@@ -8,7 +8,7 @@ Delivered-To: tester1@example.com
 Message-ID: <CAGiad1XXSzfyxj6WrTwzu3cJMu2zdA++MJH3dpStpZPbzjtRjw@mail.gmail.com>
 Subject: Another Email
 From: Tester Two <tester2@example.com>
-To: Tester One <tester1@example.com>
+To: Tester One <tester1@example.com>; Other Email <weird@email.com>
 Content-Type: multipart/alternative; boundary="94eb2c1c0a58c3c6580555eea9a1"
 
 --94eb2c1c0a58c3c6580555eea9a1
@@ -24,7 +24,7 @@ tester1@example.com
 Content-Type: text/html; charset="UTF-8"
 Content-Transfer-Encoding: quoted-printable
 
-<div>I&#39;m going to keep sending emails... as examples.</div>
+<div>I&#39;m going to ke,,,,ep sending emails... as examples.</div>
 
 --94eb2c1c0a58c3c6580555eea9a1--
 
