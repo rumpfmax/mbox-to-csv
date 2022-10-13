@@ -1,3 +1,4 @@
+from cgitb import text
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from email_reply_parser import EmailReplyParser
@@ -10,10 +11,12 @@ import ntpath
 import os
 import quopri
 import re
-import rules
+# import rules
 import sys
 import time
 import unicodecsv as csv
+import spacy
+import numpy as np
 
 # converts seconds since epoch to mm/dd/yyyy string
 def get_date(second_since_epoch, date_format):
@@ -32,10 +35,10 @@ def clean_content(content):
     # try to strip HTML tags
     # if errors happen in BeautifulSoup (for unknown encodings), then bail
     try:
-        soup = BeautifulSoup(content, "html.parser", from_encoding="iso-8859-1")
+        text = BeautifulSoup(content, "lxml").text
     except Exception as e:
         return ''
-    return ''.join(soup.findAll(text=True))
+    return text
 
 # get contents of email
 def get_content(email):
@@ -72,36 +75,32 @@ def get_emails_clean(field):
 
 # entry point
 if __name__ == '__main__':
-    argv = sys.argv
 
-    if len(argv) != 2:
-        print('usage: mbox_parser.py [path_to_mbox]')
-    else:
         # load environment settings
         load_dotenv(verbose=True)
 
-        mbox_file = argv[1]
+        mbox_file = "emails.mbox"
         file_name = ntpath.basename(mbox_file).lower()
         export_file_name = mbox_file + ".csv"
         export_file = open(export_file_name, "wb")
 
-        # get owner(s) of the mbox
-        owners = []
-        if os.path.exists(".owners"):
-            with open('.owners', 'r') as ownerlist:
-                contents = ownerlist.read()
-                owner_dict = ast.literal_eval(contents)
-            # find owners
-            for owners_array_key in owner_dict:
-                if owners_array_key in file_name:
-                    for owner_key in owner_dict[owners_array_key]:
-                        owners.append(owner_key)
+        # # get owner(s) of the mbox
+        # owners = []
+        # if os.path.exists(".owners"):
+        #     with open('.owners', 'r') as ownerlist:
+        #         contents = ownerlist.read()
+        #         owner_dict = ast.literal_eval(contents)
+        #     # find owners
+        #     for owners_array_key in owner_dict:
+        #         if owners_array_key in file_name:
+        #             for owner_key in owner_dict[owners_array_key]:
+        #                 owners.append(owner_key)
 
-        # get domain blacklist
-        blacklist_domains = []
-        if os.path.exists(".blacklist"):
-            with open('.blacklist', 'r') as blacklist:
-                blacklist_domains = [domain.rstrip() for domain in blacklist.readlines()]
+        # # get domain blacklist
+        # blacklist_domains = []
+        # if os.path.exists(".blacklist"):
+        #     with open('.blacklist', 'r') as blacklist:
+        #         blacklist_domains = [domain.rstrip() for domain in blacklist.readlines()]
 
         # create CSV with header row
         writer = csv.writer(export_file, encoding='utf-8')
@@ -109,29 +108,64 @@ if __name__ == '__main__':
 
         # create row count
         row_written = 0
+        emails = mailbox.mbox(mbox_file)
+        print(len(emails))
+        nlp = spacy.load('en_core_web_sm')
 
-        for idx, email in enumerate(mailbox.mbox(mbox_file)):
+
+        for idx, email in enumerate(emails):
             # capture default content
+            if email["date"] is None:
+                continue
             date = mktime_tz(parsedate_tz(email["date"]))
             sent_from = get_emails_clean(email["from"])
             sent_to = get_emails_clean(email["to"])
             cc = get_emails_clean(email["cc"])
             subject = re.sub('[\n\t\r]', ' -- ', str(email["subject"]))
             contents = get_content(email)
+            if contents == '':
+                # print(f"{idx}: {contents}")
+                continue
 
             # apply rules to default content
             # row = rules.apply_rules(date, sent_from, sent_to, cc, subject, contents, owners, blacklist_domains)
-            row = [idx, date, ", ".join(sent_from), ", ".join(sent_to), ", ".join(cc), subject, contents]
 
-            # write the row
-            writer.writerow(row)
-            row_written += 1
+            # we split passages meaningfully
+            doc = nlp(contents)
+            sents = list(doc.sents)
+            vecs = np.stack([sent.vector / sent.vector_norm for sent in sents])
+
+            threshold = 0.3 # controls sensitivity: lower -> more splits
+
+            clusters = [[0]]
+            for i in range(1, len(sents)):
+                if np.dot(vecs[i], vecs[i-1]) < threshold:
+                    # here we use only the similarity between neighboring pairs of sentences. 
+                    # instead, we can use the "weakest link" or "strongest link" approach.
+                    # potentially, it could improve the quality of clustering. 
+                    clusters.append([])
+                clusters[-1].append(i)
+
+            pass_idx = 0
+            for cluster in clusters:
+                passage = ' '.join([sents[i].text for i in cluster])
+                if len(passage) < 5:
+                    continue
+
+                row = [f"{idx}_{pass_idx}", date, ", ".join(sent_from), ", ".join(sent_to), ", ".join(cc), subject, passage]
+
+                # write the row
+                writer.writerow(row)
+                pass_idx += 1
+                row_written += 1
+                if row_written % 10000 == 0:
+                    print(f"Rows written: {row_written}")
 
 
         # report
-        report = "generated " + export_file_name + " for " + str(row_written) + " messages"
-        report += " (" + str(rules.cant_convert_count) + " could not convert; "
-        report += str(rules.blacklist_count) + " blacklisted)"
-        print(report)
+        # report = "generated " + export_file_name + " for " + str(row_written) + " messages"
+        # report += " (" + str(rules.cant_convert_count) + " could not convert; "
+        # report += str(rules.blacklist_count) + " blacklisted)"
+        # print(report)
 
         export_file.close()
