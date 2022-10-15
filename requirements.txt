@@ -4,3 +4,5 @@ email-reply-parser==0.5.9
 soupsieve==2.0.1
 unicodecsv==0.14.1
 python-dotenv==0.14.0
+spacy
+lxml

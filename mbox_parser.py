@@ -40,6 +40,7 @@ def clean_content(content):
         return ''
     return text
 
+
 # get contents of email
 def get_content(email):
     parts = []
@@ -49,7 +50,6 @@ def get_content(email):
             continue
 
         content = part.get_payload(decode=True)
-
         part_contents = ""
         if content is None:
             part_contents = ""
@@ -76,96 +76,68 @@ def get_emails_clean(field):
 # entry point
 if __name__ == '__main__':
 
-        # load environment settings
-        load_dotenv(verbose=True)
+    # load environment settings
+    load_dotenv(verbose=True)
 
-        mbox_file = "emails.mbox"
-        file_name = ntpath.basename(mbox_file).lower()
-        export_file_name = mbox_file + ".csv"
-        export_file = open(export_file_name, "wb")
+    mbox_file = "example.mbox"
+    file_name = ntpath.basename(mbox_file).lower()
+    export_file_name = mbox_file + ".csv"
+    export_file = open(export_file_name, "wb")
 
-        # # get owner(s) of the mbox
-        # owners = []
-        # if os.path.exists(".owners"):
-        #     with open('.owners', 'r') as ownerlist:
-        #         contents = ownerlist.read()
-        #         owner_dict = ast.literal_eval(contents)
-        #     # find owners
-        #     for owners_array_key in owner_dict:
-        #         if owners_array_key in file_name:
-        #             for owner_key in owner_dict[owners_array_key]:
-        #                 owners.append(owner_key)
+    # create CSV with header row
+    writer = csv.writer(export_file, encoding='utf-8')
+    writer.writerow(["index", "date", "from_addr", "to_addr", "cc_addr", "subject", "content"])
 
-        # # get domain blacklist
-        # blacklist_domains = []
-        # if os.path.exists(".blacklist"):
-        #     with open('.blacklist', 'r') as blacklist:
-        #         blacklist_domains = [domain.rstrip() for domain in blacklist.readlines()]
-
-        # create CSV with header row
-        writer = csv.writer(export_file, encoding='utf-8')
-        writer.writerow(["index", "date", "from_addr", "to_addr", "cc_addr", "subject", "content"])
-
-        # create row count
-        row_written = 0
-        emails = mailbox.mbox(mbox_file)
-        print(len(emails))
-        nlp = spacy.load('en_core_web_sm')
+    # create row count
+    row_written = 0
+    emails = mailbox.mbox(mbox_file)
+    print(len(emails))
+    nlp = spacy.load('en_core_web_sm')
 
 
-        for idx, email in enumerate(emails):
-            # capture default content
-            if email["date"] is None:
+    for idx, email in enumerate(emails):
+        # capture default content
+        if email["date"] is None:
+            continue
+        date = mktime_tz(parsedate_tz(email["date"]))
+        sent_from = get_emails_clean(email["from"])
+        sent_to = get_emails_clean(email["to"])
+        cc = get_emails_clean(email["cc"])
+        subject = re.sub('[\n\t\r]', ' -- ', str(email["subject"])).lower()
+        contents = get_content(email).lower()
+        if contents == '':
+            print(f"{idx}: {contents}")
+            continue
+
+        # we split passages meaningfully
+        doc = nlp(contents)
+        sents = list(doc.sents)
+        vecs = np.stack([sent.vector / sent.vector_norm for sent in sents])
+
+        threshold = 0.3 # controls sensitivity
+
+        clusters = [[0]]
+        for i in range(1, len(sents)):
+            if np.dot(vecs[i], vecs[i-1]) < threshold:
+                # here we use only the similarity between neighboring pairs of sentences.
+                # instead, we can use the "weakest link" or "strongest link" approach.
+                # potentially, it could improve the quality of clustering.
+                clusters.append([])
+            clusters[-1].append(i)
+
+        pass_idx = 0
+        for cluster in clusters:
+            passage = ' '.join([sents[i].text for i in cluster])
+            if len(passage) < 5:
                 continue
-            date = mktime_tz(parsedate_tz(email["date"]))
-            sent_from = get_emails_clean(email["from"])
-            sent_to = get_emails_clean(email["to"])
-            cc = get_emails_clean(email["cc"])
-            subject = re.sub('[\n\t\r]', ' -- ', str(email["subject"]))
-            contents = get_content(email)
-            if contents == '':
-                # print(f"{idx}: {contents}")
-                continue
 
-            # apply rules to default content
-            # row = rules.apply_rules(date, sent_from, sent_to, cc, subject, contents, owners, blacklist_domains)
+            row = [f"{idx}_{pass_idx}", date, ", ".join(sent_from), ", ".join(sent_to), ", ".join(cc), subject, passage]
 
-            # we split passages meaningfully
-            doc = nlp(contents)
-            sents = list(doc.sents)
-            vecs = np.stack([sent.vector / sent.vector_norm for sent in sents])
+            # write the row
+            writer.writerow(row)
+            pass_idx += 1
+            row_written += 1
+            if row_written % 10000 == 0:
+                print(f"Rows written: {row_written}")
 
-            threshold = 0.3 # controls sensitivity: lower -> more splits
-
-            clusters = [[0]]
-            for i in range(1, len(sents)):
-                if np.dot(vecs[i], vecs[i-1]) < threshold:
-                    # here we use only the similarity between neighboring pairs of sentences. 
-                    # instead, we can use the "weakest link" or "strongest link" approach.
-                    # potentially, it could improve the quality of clustering. 
-                    clusters.append([])
-                clusters[-1].append(i)
-
-            pass_idx = 0
-            for cluster in clusters:
-                passage = ' '.join([sents[i].text for i in cluster])
-                if len(passage) < 5:
-                    continue
-
-                row = [f"{idx}_{pass_idx}", date, ", ".join(sent_from), ", ".join(sent_to), ", ".join(cc), subject, passage]
-
-                # write the row
-                writer.writerow(row)
-                pass_idx += 1
-                row_written += 1
-                if row_written % 10000 == 0:
-                    print(f"Rows written: {row_written}")
-
-
-        # report
-        # report = "generated " + export_file_name + " for " + str(row_written) + " messages"
-        # report += " (" + str(rules.cant_convert_count) + " could not convert; "
-        # report += str(rules.blacklist_count) + " blacklisted)"
-        # print(report)
-
-        export_file.close()
+    export_file.close()
